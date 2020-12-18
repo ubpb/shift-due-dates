@@ -5,11 +5,14 @@ use_default_options do |o|
 end
 
 MAPPING_FILE_NAME = File.expand_path(options[:mapping_file])
-BACKUP_FILE_NAME  = "shift-due-dates-#{Time.now.strftime("%Y%m%d_%H%M%S")}.bak"
+BACKUP_FILE_NAME  = "shift-due-dates-#{TIMESTAMP}.bak"
+LOG_FILE_NAME     = "shift-due-dates-#{TIMESTAMP}.log"
 
 source [true]
 
 transformation ->(_) do
+  log(LOG_FILE_NAME, message: "!!! DRY RUN !!!") if options[:dry_run]
+
   # Build mapping table
   date_mappings = []
 
@@ -28,7 +31,7 @@ transformation ->(_) do
   end
 
   if date_mappings.blank?
-    puts "ERROR: Invalid mapping file."
+    log(LOG_FILE_NAME, message: "ERROR: Invalid mapping file.")
     exit
   else
     db.transaction do
@@ -57,7 +60,7 @@ transformation ->(_) do
 
       total_number_of_items = dataset.count
       total_number_of_items_length = total_number_of_items.to_s.length
-      puts "Processing #{total_number_of_items} items..."
+      log(LOG_FILE_NAME, message: "Processing #{total_number_of_items} items...")
 
       i = 0
       dataset.all do |row|
@@ -69,23 +72,25 @@ transformation ->(_) do
         date_mapping   = date_mappings.find{|d| d[:due_date] == due_date}
 
         unless date_mapping
-          puts "#{item_number}: ERROR #{row[:z36_rec_key]}: No mapping found."
+          log(LOG_FILE_NAME, message: "#{item_number}: ERROR #{row[:z36_rec_key]}: No mapping found.")
         else
           # Get new due date
           new_due_date = no_of_requests > 0 ? date_mapping[:new_date_with_request] : date_mapping[:new_date_without_request]
 
           # Save backup
-          File.open(BACKUP_FILE_NAME, 'a') { |file| file.write("#{row[:z36_rec_key]},#{due_date}\n") }
+          log(BACKUP_FILE_NAME, log_on_console: false, message: "#{row[:z36_rec_key]},#{due_date}")
 
           # Set new due date
-          db[Sequel[:pad50][:z36]].where(z36_rec_key: row[:z36_rec_key]).update(z36_due_date: new_due_date)
+          unless options[:dry_run]
+            db[Sequel[:pad50][:z36]].where(z36_rec_key: row[:z36_rec_key]).update(z36_due_date: new_due_date)
+          end
 
           # Print info
-          puts "#{item_number}: OK #{row[:z36_rec_key]}: #{due_date} (#{no_of_requests}) -> #{new_due_date}"
+          log(LOG_FILE_NAME, message: "#{item_number}: OK #{row[:z36_rec_key]}: #{due_date} (#{no_of_requests}) -> #{new_due_date}")
         end
       end
 
-      puts "DONE!"
+      log(LOG_FILE_NAME, message: "DONE!")
     end
   end
 end

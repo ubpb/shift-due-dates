@@ -5,10 +5,13 @@ use_default_options do |o|
 end
 
 BACKUP_FILE_NAME = File.expand_path(options[:backup_file])
+LOG_FILE_NAME    = "restore-due-dates-#{TIMESTAMP}.log"
 
 source [true]
 
 transformation ->(_) do
+  log(LOG_FILE_NAME, message: "!!! DRY RUN !!!") if options[:dry_run]
+
   db.transaction do
     File.open(BACKUP_FILE_NAME, 'r').each do |line|
       next if line.starts_with?("#")
@@ -16,11 +19,16 @@ transformation ->(_) do
       z36_rec_key, orig_due_date = line.split(",").map(&:strip).map(&:presence).compact
 
       if z36_rec_key && orig_due_date
-        db[Sequel[:pad50][:z36]].where(z36_rec_key: z36_rec_key).update(z36_due_date: orig_due_date)
-        puts "#{z36_rec_key}: OK -> #{orig_due_date}"
+        unless options[:dry_run]
+          db[Sequel[:pad50][:z36]].where(z36_rec_key: z36_rec_key).update(z36_due_date: orig_due_date)
+        end
+
+        log(LOG_FILE_NAME, message: "#{z36_rec_key}: OK -> #{orig_due_date}")
+      else
+        log(LOG_FILE_NAME, message: "ERROR -> Mapping file format invalid.")
       end
     end
 
-    puts "DONE!"
+    log(LOG_FILE_NAME, message: "DONE!")
   end
 end
