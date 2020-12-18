@@ -69,7 +69,7 @@ transformation ->(_) do
 
           # Set new due date
           unless options[:dry_run]
-            #db[Sequel[:pad50][:z37]].where(z37_rec_key: row[:z37_rec_key]).update(z37_end_hold_date: new_end_hold_date)
+            db[Sequel[:pad50][:z37]].where(z37_rec_key: row[:z37_rec_key]).update(z37_end_hold_date: new_end_hold_date)
           end
 
           # Print info
