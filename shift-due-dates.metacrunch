@@ -1,0 +1,91 @@
+require_relative "base"
+
+use_default_options do |o|
+  o.add :mapping_file, "--mapping-file FILE", "Mapping file how to shift due dates", String, required: true
+end
+
+MAPPING_FILE_NAME = File.expand_path(options[:mapping_file])
+BACKUP_FILE_NAME  = "shift-due-dates-#{Time.now.strftime("%Y%m%d_%H%M%S")}.bak"
+
+source [true]
+
+transformation ->(_) do
+  # Build mapping table
+  date_mappings = []
+
+  File.open(MAPPING_FILE_NAME, 'r').each do |line|
+    next if line.starts_with?("#")
+
+    due_date, new_date_without_request, new_date_with_request = line.split(",").map(&:strip).map(&:presence).compact
+
+    if due_date && new_date_without_request && new_date_with_request
+      date_mappings << {
+        due_date: due_date,
+        new_date_without_request: new_date_without_request,
+        new_date_with_request: new_date_with_request
+      }
+    end
+  end
+
+  if date_mappings.blank?
+    puts "ERROR: Invalid mapping file."
+    exit
+  else
+    db.transaction do
+      dataset = db["
+        select
+          pad50.z36.z36_rec_key,
+          pad50.z36.z36_due_date,
+          (
+            select
+              count(pad50.z37.z37_rec_key)
+            from
+              pad50.z37
+            where
+              pad50.z36.z36_rec_key = substr(pad50.z37.z37_rec_key,1,15)
+              AND (
+                pad50.z37.z37_status = 'A' OR pad50.z37.z37_status = 'W'
+              )
+          ) as no_of_requests
+        from
+          pad50.z36
+        where
+          pad50.z36.z36_due_date in (#{date_mappings.map{|d| d[:due_date]}.map{|d| "'#{d}'"}.join(",")})
+        order by
+          pad50.z36.z36_due_date desc
+      "]
+
+      total_number_of_items = dataset.count
+      total_number_of_items_length = total_number_of_items.to_s.length
+      puts "Processing #{total_number_of_items} items..."
+
+      i = 0
+      dataset.all do |row|
+        i += 1
+        item_number = i.to_s.rjust(total_number_of_items_length, ' ')
+
+        no_of_requests = row[:no_of_requests].to_i
+        due_date       = row[:z36_due_date].to_s
+        date_mapping   = date_mappings.find{|d| d[:due_date] == due_date}
+
+        unless date_mapping
+          puts "#{item_number}: ERROR #{row[:z36_rec_key]}: No mapping found."
+        else
+          # Get new due date
+          new_due_date = no_of_requests > 0 ? date_mapping[:new_date_with_request] : date_mapping[:new_date_without_request]
+
+          # Save backup
+          File.open(BACKUP_FILE_NAME, 'a') { |file| file.write("#{row[:z36_rec_key]},#{due_date}\n") }
+
+          # Set new due date
+          db[Sequel[:pad50][:z36]].where(z36_rec_key: row[:z36_rec_key]).update(z36_due_date: new_due_date)
+
+          # Print info
+          puts "#{item_number}: OK #{row[:z36_rec_key]}: #{due_date} (#{no_of_requests}) -> #{new_due_date}"
+        end
+      end
+
+      puts "DONE!"
+    end
+  end
+end

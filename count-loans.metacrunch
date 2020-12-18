@@ -1,0 +1,12 @@
+require_relative "base"
+
+use_default_options do |o|
+  o.add :dates, "--dates DATES", "List of dates to count", Array, required: true
+end
+
+source options[:dates]
+
+transformation ->(date) do
+  dataset = db[Sequel[:pad50][:z36]].where(z36_due_date: date)
+  puts "#{date} => #{dataset.count}"
+end

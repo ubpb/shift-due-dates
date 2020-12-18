@@ -1,0 +1,26 @@
+require_relative "base"
+
+use_default_options do |o|
+  o.add :backup_file, "--backup-file FILE", "Backup file to restore", String, required: true
+end
+
+BACKUP_FILE_NAME = File.expand_path(options[:backup_file])
+
+source [true]
+
+transformation ->(_) do
+  db.transaction do
+    File.open(BACKUP_FILE_NAME, 'r').each do |line|
+      next if line.starts_with?("#")
+
+      z36_rec_key, orig_due_date = line.split(",").map(&:strip).map(&:presence).compact
+
+      if z36_rec_key && orig_due_date
+        db[Sequel[:pad50][:z36]].where(z36_rec_key: z36_rec_key).update(z36_due_date: orig_due_date)
+        puts "#{z36_rec_key}: OK -> #{orig_due_date}"
+      end
+    end
+
+    puts "DONE!"
+  end
+end
